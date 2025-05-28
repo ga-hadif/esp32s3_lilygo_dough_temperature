@@ -95,7 +95,13 @@ const char* indexHtml = R"rawliteral(
       <label for="password">Password:</label><br />
       <input type="password" id="password" name="password" /><br /><br />
 
-      <button type="submit">Connect</button>
+      <button type="submit">Save Wi-Fi Credentials</button>
+    </form>
+
+    <form>
+      <label for="name">Device Name:</label><br />
+      <input type="text" id="name" name="name" /><br /><br />
+
     </form>
 
     <div id="wifiModal">
@@ -153,51 +159,16 @@ const char* indexHtml = R"rawliteral(
         ssidList.innerHTML = "<li>Error fetching results</li>";
       });
   }
-  </script>
 
+  window.addEventListener("load", () => {
+  fetch("/wifi_config")
+    .then(res => res.json())
+    .then(data => {
+      document.getElementById("ssid").value = data.ssid || "";
+      document.getElementById("password").value = data.pass || "";
+    });
+});
 
-    // <script>
-    //   const modal = document.getElementById("wifiModal");
-    //   const ssidList = document.getElementById("ssidList");
-    //   const ssidInput = document.getElementById("ssid");
-
-    //   function closeModal() {
-    //     modal.classList.remove("show");
-    //   }
-
-    //   document.getElementById("scanWifiButton").addEventListener("click", startScan);
-
-    //   function startScan() {
-    //     ssidList.innerHTML = "<li>Scanning...</li>";
-    //     modal.classList.add("show");
-
-    //     fetch("/scan")
-    //       .then((res) => res.json())
-    //       .then((data) => {
-    //         if (data.status === "scanning") {
-    //           ssidList.innerHTML = "<li>Scanning... please wait</li>";
-    //           setTimeout(startScan, 2000);  // Retry after delay
-    //           return;
-    //         }
-
-    //         if (data.status === "done") {
-    //           ssidList.innerHTML = "";
-    //           data.ssids.forEach((ssid) => {
-    //             const item = document.createElement("li");
-    //             item.textContent = ssid;
-    //             item.addEventListener("click", () => {
-    //               ssidInput.value = ssid;
-    //               closeModal();
-    //             });
-    //             ssidList.appendChild(item);
-    //           });
-    //         }
-    //       })
-    //       .catch(() => {
-    //         ssidList.innerHTML = "<li>Error scanning</li>";
-    //       });
-    //   }
-    // </script>
 
   </body>
 </html>
