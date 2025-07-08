@@ -28,19 +28,18 @@
 #include "fa_icon.c"
 #include "temp_icon.c"
 #include "sent_icon.c"
-// #include "sent_icon_big.c"
+#include "firestore_response_icon.c"
 
-// LV_FONT_DECLARE(fire_icon);
 LV_FONT_DECLARE(fa_icon);
 LV_FONT_DECLARE(temp_icon);
-LV_FONT_DECLARE(sent_icon);
+LV_FONT_DECLARE(firestore_response_icon);
 
 #define FIREBASE_PROJECT_ID "schpi-productionsys-cp2ver1"
-// #define MY_FIRE_SYMBOL "\xEF\x81\xAD"
 #define MY_FIRE_ICON "\xEF\x81\xAD"
 #define MY_TEMP_ICON "\xEF\x8B\x8B"
 #define BIG_TEMP_ICON "\xEF\x8B\x8B"
-#define MY_SENT_ICON "\xEF\x81\x98"
+#define MY_CHECK_ICON "\xEF\x81\x98"
+#define MY_CROSS_ICON "\xEF\x81\x97"
 
 String creds_file = "/serviceAccountKey.json";
 FileConfig sa_file(creds_file.c_str(), file_operation_callback);
@@ -96,6 +95,13 @@ Preferences prefs;
 String ssid;
 String password;
 
+struct FirestoreResult {
+  bool success;
+  String message;
+};
+
+QueueHandle_t firestoreResultQueue;
+
 int retry=0;
 bool writeInProgress = false;
 
@@ -107,121 +113,165 @@ void TaskUpdateTime(void *pvParameters);
 void TaskWriteToFirestore(void *pvParameters);
 void TaskReadTemp(void *pvParameters);
 void TaskResendOfflineLogs(void *pvParameters);
+void TaskHandleFirestoreResult(void *pvParameters);
+void TaskLVGL(void *pvParameters);
 void switchToAPSTAMode();
 void switchToSTAMode();
 
 // Callback for Firebase Response
-void onFirestoreWriteDone(AsyncResult &aResult) {
-        Serial.printf("Callback Running on core: %d\n", xPortGetCoreID());
-        if (aResult.isError()) {
-            Serial.printf("❌ Firestore error: %s\n", aResult.error().message().c_str());
+void onFirestoreWriteDone(AsyncResult &aResult)
+{
+    FirestoreResult result;
 
-            // xSemaphoreTake(lvglMutex, portMAX_DELAY);
-            // lv_obj_add_flag(objects.ui_upload_spinner_1, LV_OBJ_FLAG_HIDDEN);
-            // lv_obj_set_style_text_font(objects.ui_sent_1, &sent_icon, LV_PART_MAIN);
-            // lv_label_set_text(objects.ui_sent_1, MY_SENT_ICON);
-            // lv_label_set_text(objects.ui_sent_status, "Firestore Error");
-            // xSemaphoreGive(lvglMutex);
+    if (!aResult.isResult()){
+        result.success = false;
+        result.message = "No Result";
+        return;
+    } else  if (aResult.isEvent()){
+        Firebase.printf("Event task: %s, msg: %s, code: %d\n", aResult.uid().c_str(), aResult.eventLog().message().c_str(), aResult.eventLog().code());
+        result.success = false;
+        result.message = "No Result";
+    } else if (aResult.isDebug()){
+        Firebase.printf("Debug task: %s, msg: %s\n", aResult.uid().c_str(), aResult.debug().c_str());
+        result.success = false;
+        result.message = "No Result";
+    } else if (aResult.isError()){
+       // Firebase.printf("Error task: %s, msg: %s, code: %d\n", aResult.uid().c_str(), aResult.error().message().c_str(), aResult.error().code());
+       result.success = false;
+       result.message = "Firestore Error";
+    } else if (aResult.available()){
+        // Firebase.printf("task: %s, payload: %s\n", aResult.uid().c_str(), aResult.c_str());
+        result.success = true;
+        result.message = "Data recorded";      
+    }
 
-            // // Delay screen switch using lv_timer
-            // lv_timer_create([](lv_timer_t *timer) {
-            //     // Switch screen in safe LVGL context
-            //     xSemaphoreTake(lvglMutex, portMAX_DELAY);
-            //     lv_obj_t *current = lv_scr_act(); 
-            //     if (current != objects.main) { 
-            //         lv_scr_load(objects.main);  
-            //         lv_obj_clean(current);     
-            //         lv_obj_del(current);  
-            //         objects.send_data = nullptr;  
-            //         // create_screen_send_data();  
-            //     }
-            //     xSemaphoreGive(lvglMutex);
-            //     lv_timer_del(timer); // Clean up timer
-            // }, 2000, NULL); // 2
-
-            xSemaphoreTake(lvglMutex, portMAX_DELAY);
-
-            lv_obj_add_flag(objects.ui_upload_spinner_1, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_set_style_text_font(objects.ui_sent_1, &sent_icon, LV_PART_MAIN);
-            lv_label_set_text(objects.ui_sent_1, MY_SENT_ICON);
-            lv_label_set_text(objects.ui_sent_status, "Firestore Error");
-
-            // Delay screen switch using lv_timer
-            lv_timer_create([](lv_timer_t *timer) {
-                // Switch screen in safe LVGL context
-                lv_obj_t *current = lv_scr_act(); 
-                if (current != objects.main) { 
-                    lv_scr_load(objects.main);  
-                    lv_obj_clean(current);     
-                    lv_obj_del(current);  
-                    objects.send_data = nullptr;  
-                    // create_screen_send_data();  
-                }
-                lv_timer_del(timer); // Clean up timer
-            }, 2000, NULL); // 2
-
-            
-             xSemaphoreGive(lvglMutex);
-
-            
-            // return;
-        }
-
-        if (aResult.available()) {
-            // xSemaphoreTake(lvglMutex, portMAX_DELAY);
-            // lv_obj_add_flag(objects.ui_upload_spinner_1, LV_OBJ_FLAG_HIDDEN);
-            // lv_obj_set_style_text_font(objects.ui_sent_1, &sent_icon, LV_PART_MAIN);
-            // lv_label_set_text(objects.ui_sent_1, MY_SENT_ICON);
-            // lv_label_set_text(objects.ui_sent_status, "Data recorded");
-            // xSemaphoreGive(lvglMutex);
-
-            // // Delay screen switch using lv_timer
-            // lv_timer_create([](lv_timer_t *timer) {
-            //     // Switch screen in safe LVGL context
-            //     xSemaphoreTake(lvglMutex, portMAX_DELAY);
-            //     lv_obj_t *current = lv_scr_act(); 
-            //     if (current != objects.main) { 
-            //         lv_scr_load(objects.main);  
-            //         lv_obj_clean(current);     
-            //         lv_obj_del(current);  
-            //         objects.send_data = nullptr;  
-            //         // create_screen_send_data();  
-            //     }
-            //     xSemaphoreGive(lvglMutex);
-            //     lv_timer_del(timer); // Clean up timer
-            // }, 2000, NULL); // 2
-
-            xSemaphoreTake(lvglMutex, portMAX_DELAY);
-
-            lv_obj_add_flag(objects.ui_upload_spinner_1, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_clear_flag(objects.ui_sent_1, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_set_style_text_font(objects.ui_sent_1, &sent_icon, LV_PART_MAIN);
-            lv_label_set_text(objects.ui_sent_1, MY_SENT_ICON);
-            lv_label_set_text(objects.ui_sent_status, "Data recorded");
-
-            // Delay screen switch using lv_timer
-            lv_timer_create([](lv_timer_t *timer) {
-                // Switch screen in safe LVGL context
-                lv_obj_t *current = lv_scr_act(); 
-                if (current != objects.main) { 
-                    lv_scr_load(objects.main);  
-                    lv_obj_clean(current);     
-                    lv_obj_del(current);  
-                    objects.send_data = nullptr;  
-                    // create_screen_send_data();  
-                }
-                lv_timer_del(timer); // Clean up timer
-            }, 2000, NULL); // 2
-
-             xSemaphoreGive(lvglMutex);
-
-
-            Serial.println("✅ Doc written successfully");
-            Serial.println(String("Response: ") + aResult.c_str()); 
-
-        }
-
+    xQueueSend(firestoreResultQueue, &result, 0);
 }
+
+
+// void onFirestoreWriteDone(AsyncResult &aResult) {
+//         Serial.printf("Callback Running on core: %d\n", xPortGetCoreID());
+
+//         if (!aResult.isResult()){
+
+//             xSemaphoreTake(lvglMutex, portMAX_DELAY);
+
+//             // Hide spinner
+//             lv_obj_add_flag(objects.ui_upload_spinner_1, LV_OBJ_FLAG_HIDDEN);
+
+//             // Unhide firestore status icon 
+//             lv_obj_clear_flag(objects.ui_sent_1, LV_OBJ_FLAG_HIDDEN);
+//             lv_obj_set_style_text_font(objects.ui_sent_1, &firestore_response_icon, LV_PART_MAIN);
+//             lv_label_set_text(objects.ui_sent_1, MY_CROSS_ICON);
+
+//             // Color the cross RED
+//             lv_obj_set_style_text_color(objects.ui_sent_1, lv_color_hex(0xFF0000), LV_PART_MAIN);
+
+//             // Update status label text 
+//             lv_label_set_text(objects.ui_sent_status, "No Result Somehow");
+
+//             // Delay screen switch using lv_timer
+//             lv_timer_create([](lv_timer_t *timer) {
+//                 // Switch screen in safe LVGL context
+//                 lv_obj_t *current = lv_scr_act(); 
+//                 if (current != objects.main) { 
+//                     lv_scr_load(objects.main);  
+//                     lv_obj_clean(current);     
+//                     lv_obj_del(current);  
+//                     objects.send_data = nullptr;  
+//                     // create_screen_send_data();  
+//                 }
+//                 lv_timer_del(timer); // Clean up timer
+//             }, 2000, NULL); // 2
+
+            
+//             xSemaphoreGive(lvglMutex);
+//             return;
+//         }
+
+//         if (aResult.isEvent())
+//         {
+//             Firebase.printf("Event task: %s, msg: %s, code: %d\n", aResult.uid().c_str(), aResult.eventLog().message().c_str(), aResult.eventLog().code());
+//         }
+
+//         if (aResult.isDebug())
+//         {
+//             Firebase.printf("Debug task: %s, msg: %s\n", aResult.uid().c_str(), aResult.debug().c_str());
+//         }
+//         if (aResult.isError()) {
+//             Serial.printf("❌ Firestore error: %s\n", aResult.error().message().c_str());
+
+//             xSemaphoreTake(lvglMutex, portMAX_DELAY);
+
+//             // Hide spinner
+//             lv_obj_add_flag(objects.ui_upload_spinner_1, LV_OBJ_FLAG_HIDDEN);
+
+//             // Unhide firestore status icon 
+//             lv_obj_clear_flag(objects.ui_sent_1, LV_OBJ_FLAG_HIDDEN);
+//             lv_obj_set_style_text_font(objects.ui_sent_1, &firestore_response_icon, LV_PART_MAIN);
+//             lv_label_set_text(objects.ui_sent_1, MY_CROSS_ICON);
+
+//             // Color the cross RED
+//             lv_obj_set_style_text_color(objects.ui_sent_1, lv_color_hex(0xFF0000), LV_PART_MAIN);
+
+//             // Update status label text 
+//             lv_label_set_text(objects.ui_sent_status, "Firestore Error");
+
+//             // Delay screen switch using lv_timer
+//             lv_timer_create([](lv_timer_t *timer) {
+//                 // Switch screen in safe LVGL context
+//                 lv_obj_t *current = lv_scr_act(); 
+//                 if (current != objects.main) { 
+//                     lv_scr_load(objects.main);  
+//                     lv_obj_clean(current);     
+//                     lv_obj_del(current);  
+//                     objects.send_data = nullptr;  
+//                     // create_screen_send_data();  
+//                 }
+//                 lv_timer_del(timer); // Clean up timer
+//             }, 2000, NULL); // 2
+
+            
+//              xSemaphoreGive(lvglMutex);
+//         }
+
+//         if (aResult.available()) {
+
+//             xSemaphoreTake(lvglMutex, portMAX_DELAY);
+
+//             lv_obj_add_flag(objects.ui_upload_spinner_1, LV_OBJ_FLAG_HIDDEN);
+
+//             lv_obj_clear_flag(objects.ui_sent_1, LV_OBJ_FLAG_HIDDEN);
+//             lv_obj_set_style_text_font(objects.ui_sent_1, &firestore_response_icon, LV_PART_MAIN);
+//             lv_label_set_text(objects.ui_sent_1, MY_CHECK_ICON);
+
+//             lv_label_set_text(objects.ui_sent_status, "Data recorded");
+//             lv_obj_set_style_text_color(objects.ui_sent_status, lv_color_hex(0x2cff2c), LV_PART_MAIN);
+//             //#35b977
+
+//             // Delay screen switch using lv_timer
+//             lv_timer_create([](lv_timer_t *timer) {
+//                 // Switch screen in safe LVGL context
+//                 lv_obj_t *current = lv_scr_act(); 
+//                 if (current != objects.main) { 
+//                     lv_scr_load(objects.main);  
+//                     lv_obj_clean(current);     
+//                     lv_obj_del(current);  
+//                     objects.send_data = nullptr;  
+//                     // create_screen_send_data();  
+//                 }
+//                 lv_timer_del(timer); // Clean up timer
+//             }, 2000, NULL); // 2
+
+//              xSemaphoreGive(lvglMutex);
+
+
+//             Serial.println("✅ Doc written successfully");
+//             Serial.println(String("Response: ") + aResult.c_str()); 
+
+//         }
+
+// }
 
 void onFirestoreSyncLogs(AsyncResult &aResult) {
         Serial.printf("Callback Running on core: %d\n", xPortGetCoreID());
@@ -233,14 +283,13 @@ void onFirestoreSyncLogs(AsyncResult &aResult) {
         if (aResult.available()) {
             Serial.println("Offline Sync Successful");
             Serial.println(String("Response: ") + aResult.c_str()); 
-
         }
 }
 
 void switchToAPSTAMode() {
     Serial.println("🔄 Switching to AP Mode...");
 
-    WiFi.disconnect(true);
+    // WiFi.disconnect(true);
     WiFi.mode(WIFI_AP_STA);
     WiFi.softAP(apSSID, apPassword,1);
 
@@ -368,8 +417,6 @@ void initWebServer() {
     server.begin();
 }
 
-
-
 void setup()
 {       
     Serial.begin(115200);
@@ -379,6 +426,7 @@ void setup()
     scanMutex = xSemaphoreCreateMutex();
     tempMutex = xSemaphoreCreateMutex();
     lvglMutex = xSemaphoreCreateMutex();
+    firestoreResultQueue = xQueueCreate(5, sizeof(FirestoreResult));
 
     prefs.begin("wifi", false);
     ssid = prefs.getString("ssid", ""); 
@@ -429,21 +477,11 @@ void setup()
 
     thermo.begin(MAX31865_3WIRE); 
 
-    // if (MY_FS.exists("/data_log.txt")) {
-    //     Serial.println("✅ data_log.txt exists");
-    // //     if (MY_FS.remove("/data_log.txt")) {
-    // //         Serial.println("✅ Deleted");
-    // //     } else {
-    // //         Serial.println("❌ Failed to delete");
-    // // }
-    // } else {
-    //     Serial.println("📭 data_log.txt not found");
-    // }
-
-
     // Create FreeRTOS tasks
-    xTaskCreatePinnedToCore(TaskUpdateTime, "UpdateTime", 8192, NULL, 1, &TaskTimeHandle, 1);
-    xTaskCreatePinnedToCore(TaskReadTemp, "ReadTemp", 8192, NULL, 1, NULL, 1);
+    xTaskCreatePinnedToCore(TaskUpdateTime, "UpdateTime", 4096, NULL, 1, &TaskTimeHandle, 1);
+    xTaskCreatePinnedToCore(TaskReadTemp, "ReadTemp", 2304, NULL, 1, NULL, 1);
+    xTaskCreatePinnedToCore(TaskLVGL, "LVGL Task", 4096, NULL, 2, NULL, 1);
+    xTaskCreatePinnedToCore(TaskHandleFirestoreResult, "HandleFirestore", 4096, NULL, 1, NULL, 1);
 }
 
 void TaskUpdateTime(void *pvParameters) {
@@ -467,7 +505,7 @@ void TaskUpdateTime(void *pvParameters) {
             xSemaphoreGive(lvglMutex);
         }
 
-        vTaskDelay(pdMS_TO_TICKS(2000));  // Wait 5 seconds before next send
+        vTaskDelay(pdMS_TO_TICKS(30000));  // Wait 5 seconds before next send
     }
 }
 
@@ -519,8 +557,6 @@ void logTemperatureToCSV(const char *docId, const String &timestampStr, float te
     Serial.printf("📄 Logged to %s: %s, %.2f\n", filename, timestampStr.c_str(), temp);
 }
 
-
-
 void TaskWriteToFirestore(void *pvParameters) {
     Serial.printf("📍 Firestore Running on core: %d\n", xPortGetCoreID());
 
@@ -555,14 +591,6 @@ void TaskWriteToFirestore(void *pvParameters) {
     Serial.println("Logging to file before sending to Firestore");
     logTemperatureToCSV(docId, timestampStr, tempToWrite); 
 
-    // if (WiFi.status() != WL_CONNECTED) {
-    //     Serial.println("WiFi down — logging to file instead");
-    //     logTemperatureToCSV(docId, timestampStr, tempToWrite); 
-    //     writeInProgress = false; 
-    //     vTaskDelete(NULL);
-    //     return;
-    // }
-
     if(WiFi.status() == WL_CONNECTED) {
         String key = "data";
         String documentPath = "wz_test/"+ String(docId);
@@ -589,8 +617,6 @@ void TaskWriteToFirestore(void *pvParameters) {
 
     vTaskDelete(NULL);
 }
-
-
 
 void TaskResendOfflineLogs(void *pvParameters) {
     time_t now = timeClient.getEpochTime();
@@ -696,7 +722,47 @@ void TaskResendOfflineLogs(void *pvParameters) {
     vTaskDelete(NULL);
 }
 
+void TaskHandleFirestoreResult(void *pvParameters) {
+    FirestoreResult result;
 
+    while (1) {
+        // Block until new result arrives
+        if (xQueueReceive(firestoreResultQueue, &result, portMAX_DELAY)) {
+            if (xSemaphoreTake(lvglMutex, portMAX_DELAY)) {
+                lv_obj_add_flag(objects.ui_upload_spinner_1, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(objects.ui_sent_1, LV_OBJ_FLAG_HIDDEN);
+
+                if (result.success) {
+                    lv_obj_set_style_text_font(objects.ui_sent_1, &firestore_response_icon, LV_PART_MAIN);
+                    lv_label_set_text(objects.ui_sent_1, MY_CHECK_ICON);
+                    lv_label_set_text(objects.ui_sent_status, result.message.c_str());
+                    lv_obj_set_style_text_color(objects.ui_sent_status, lv_color_hex(0x2cff2c), LV_PART_MAIN);
+                    //#35b977
+                } else {
+                    lv_obj_set_style_text_font(objects.ui_sent_1, &firestore_response_icon, LV_PART_MAIN);
+                    lv_obj_set_style_text_color(objects.ui_sent_1, lv_color_hex(0xFF0000), LV_PART_MAIN);  
+                    lv_label_set_text(objects.ui_sent_1, MY_CROSS_ICON);
+                    lv_obj_set_style_text_color(objects.ui_sent_status, lv_color_hex(0xFF0000), LV_PART_MAIN);
+                    lv_label_set_text(objects.ui_sent_status, result.message.c_str());
+                }
+
+                // Optional: timer to return to main screen
+                lv_timer_create([](lv_timer_t *timer) {
+                    lv_obj_t *current = lv_scr_act();
+                    if (current != objects.main) {
+                        lv_scr_load(objects.main);
+                        lv_obj_clean(current);
+                        lv_obj_del(current);
+                        objects.send_data = nullptr;
+                    }
+                    lv_timer_del(timer);
+                }, 2000, NULL);
+
+                xSemaphoreGive(lvglMutex);
+            }
+        }
+    }
+}
 
 void TaskReadTemp(void *pvParameters) {
     while (1) {
@@ -738,44 +804,30 @@ void TaskReadTemp(void *pvParameters) {
 
         //     thermo.clearFault();
         // }
+        // UBaseType_t stackRemaining = uxTaskGetStackHighWaterMark(NULL); // NULL = current task
+        // Serial.print("🧠 Stack left (words): ");
+        // Serial.println(stackRemaining);
         vTaskDelay(pdMS_TO_TICKS(1000));
 
     }
 }
 
+void TaskLVGL(void *pvParameters) {
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(10));  // 10 ms delay
 
-void loop()
-{
+        // Try to take the semaphore, run LVGL, and release
+        if (xSemaphoreTake(lvglMutex, portMAX_DELAY) == pdTRUE) {
+            lv_task_handler();  // or lv_task_handler() for older LVGL versions
+            xSemaphoreGive(lvglMutex);
+        }
 
-    xSemaphoreTake(lvglMutex, portMAX_DELAY);
-    lv_task_handler();
-    xSemaphoreGive(lvglMutex);
-   
-    app.loop();
-
-    static bool lastButtonState = HIGH;
-    bool currentState = digitalRead(14); // Button state
-    static unsigned long lastInitAttempt = 0; // Last time Firebase was initialized
-    static unsigned long lastOfflineCheck = 0;
-    const unsigned long checkInterval = 60000; // Interval to check if theres unsent data
-
-    static bool appWasReady = false;
-
-    if (!appWasReady && app.ready()) {
-        appWasReady = true;
-        lv_obj_set_style_text_font(objects.ui_firebase_status, &fa_icon, LV_PART_MAIN);
-        lv_label_set_text(objects.ui_firebase_status, MY_FIRE_ICON);
-        lv_obj_set_style_text_color(objects.ui_firebase_status, lv_color_hex(0xff931c), LV_PART_MAIN);
-        // lv_label_set_text(objects.ui_wifi_status, LV_SYMBOL_WIFI);
     }
+}
 
-    if (WiFi.status() != WL_CONNECTED) {
-        lv_obj_set_style_text_color(objects.ui_wifi_status, lv_color_hex(0x808080), LV_PART_MAIN);
-        lv_label_set_text(objects.ui_wifi_status, LV_SYMBOL_WIFI);
-    }
+void handleFirebaseRetry() {
 
-    // Retry Firebase initialization if it failed
-    // Usually failed due to network issues or failed to get correct time
+    static unsigned long lastInitAttempt = 0;
     if (!app.ready() && timeSet && millis() - lastInitAttempt > 5000) {
         Serial.println("🔁 Retrying Firebase initialization...");
 
@@ -787,11 +839,23 @@ void loop()
         app.getApp<Firestore::Documents>(Docs);
 
         lastInitAttempt = millis();
-        appWasReady = false;
     }
 
- 
-    if (app.ready() && !writeInProgress && currentState == LOW && lastButtonState == HIGH) {
+}
+
+void handleOfflineResend() {
+    static unsigned long lastOfflineCheck = 0;
+    const unsigned long checkInterval = 60000;
+
+    if (app.ready() && millis() - lastOfflineCheck >= checkInterval) {
+        lastOfflineCheck = millis();
+        Serial.println("Checking for unsent logs (5 min timer)");
+        xTaskCreatePinnedToCore(TaskResendOfflineLogs, "ResendOfflineLogs", 4096, NULL, 1, &TaskResendOfflineLogsHandle, 0);
+    }
+}
+
+void handleButtonPress(bool currentState, bool lastState) {
+    if (app.ready() && !writeInProgress && currentState == LOW && lastState == HIGH) {
         buttonPressed = true;
         writeInProgress = true;
         Serial.println("🚀 Button Pressed, writing to Firestore");
@@ -812,16 +876,56 @@ void loop()
 
         xTaskCreatePinnedToCore(TaskWriteToFirestore, "writeToFirestore", 8192, NULL, 1, &TaskWriteToFirestoreHandle, 0);
     }
+}
 
-
-    if (app.ready() && millis() - lastOfflineCheck >= checkInterval) {
-        lastOfflineCheck = millis();
-        Serial.println("Checking for unsent logs (5 min timer)");
-        xTaskCreatePinnedToCore(TaskResendOfflineLogs, "ResendOfflineLogs", 8192, NULL, 1, &TaskResendOfflineLogsHandle, 0);
+void updateFirebaseIcon() {
+    static bool appWasReady = false;
+    if (!appWasReady && app.ready()) {
+        appWasReady = true;
+        lv_obj_set_style_text_font(objects.ui_firebase_status, &fa_icon, LV_PART_MAIN);
+        lv_label_set_text(objects.ui_firebase_status, MY_FIRE_ICON);
+        lv_obj_set_style_text_color(objects.ui_firebase_status, lv_color_hex(0xff931c), LV_PART_MAIN);
     }
+}
+
+void updateWiFiStatus() {
+    if (WiFi.status() != WL_CONNECTED) {
+        lv_obj_set_style_text_color(objects.ui_wifi_status, lv_color_hex(0x808080), LV_PART_MAIN);
+        lv_label_set_text(objects.ui_wifi_status, LV_SYMBOL_WIFI);
+    }
+}
+
+void loop()
+{
+    // Serial.printf("📦 Heap: %d bytes free\n", ESP.getFreeHeap()); // Check heap for memory leaks
+
+    static bool lastButtonState = HIGH;
+    bool currentState = digitalRead(14); // Button state
+
+    // updateLVGL(); // UI Refresh
+    app.loop(); // Firebase App Loop
+    updateFirebaseIcon(); // Change icon to orange if Firebase is ready
+    updateWiFiStatus(); // Change icon to grey if WiFi is down
+
+    // Retry Firebase initialization if it failed 
+    // Usually failed due to network issues or failed to get correct time
+    handleFirebaseRetry();
+    handleButtonPress(currentState, lastButtonState);
+    handleOfflineResend();
 
     lastButtonState = currentState;
-
 }
 
 // With C, you unfortunately have to remember to set object references to NULL after you delete them if you wish to check for their existence later.
+// [598324][E][ssl_client.cpp:37] _handle_error(): [data_to_read():361]: (-76) UNKNOWN ERROR CODE (004C)
+
+// if (MY_FS.exists("/data_log.txt")) {
+//     Serial.println("✅ data_log.txt exists");
+//      if (MY_FS.remove("/data_log.txt")) {
+//         Serial.println("✅ Deleted");
+//     } else {
+//         Serial.println("❌ Failed to delete");
+//  }
+// } else {
+//     Serial.println("📭 data_log.txt not found");
+// }
